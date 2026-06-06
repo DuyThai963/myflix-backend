@@ -12,10 +12,38 @@ router.post("/sync", async (req, res) => {
 
   try {
     const parsedUserId = parseInt(userId, 10);
+    const uniqueHistoryMap = new Map();
 
-    for (const item of localHistory) {
+    localHistory.forEach((item) => {
+      if (!item || !item.watchId) return;
+      
+      const cleanMovieId = item.watchId.includes("-") ? item.watchId.split('-')[0] : item.watchId;
+      
+      if (!uniqueHistoryMap.has(cleanMovieId)) {
+        uniqueHistoryMap.set(cleanMovieId, item);
+      } else {
+        const existingItem = uniqueHistoryMap.get(cleanMovieId);
+        const existingTime = existingItem.updatedAt ? new Date(existingItem.updatedAt).getTime() : 0;
+        const currentItemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+
+        if (currentItemTime > existingTime) {
+          uniqueHistoryMap.set(cleanMovieId, item);
+        }
+      }
+    });
+
+    for (const item of uniqueHistoryMap.values()) {
       const { watchId, episodeSlug, episodeName, currentTime, movie } = item;
       const parsedTime = Math.round(parseFloat(currentTime || 0));
+      const cleanMovieId = watchId && watchId.includes("-") ? watchId.split('-')[0] : watchId;
+
+      if (parsedTime === 0) {
+        await pool.query(
+          "DELETE FROM watch_histories WHERE user_id = $1 AND watch_id = $2",
+          [parsedUserId, cleanMovieId]
+        );
+        continue;
+      }
 
       await pool.query(`
         INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, updated_at)
@@ -29,16 +57,17 @@ router.post("/sync", async (req, res) => {
           updated_at = NOW();
       `, [
         parsedUserId, 
-        watchId, 
+        cleanMovieId, 
         episodeSlug ? String(episodeSlug) : "1", 
         episodeName ? String(episodeName) : "Tập 1", 
         parsedTime, 
         typeof movie === "string" ? movie : JSON.stringify(movie)
       ]);
     }
-    return res.json({ success: true, message: "Đã đồng bộ thành công!" });
+
+    return res.json({ success: true, message: "Đã đồng bộ hóa dữ liệu sạch bóng rác!" });
   } catch (err) {
-    console.error("❌ [LỖI THỰC THI SQL TRONG LUỒNG SYNC]:", err.message);
+    console.error("❌ [LỖI KHỐI SYNC BACKEND]:", err.message);
     return res.status(500).json({ error: "Lỗi hệ thống!" });
   }
 });
