@@ -40,7 +40,7 @@ require('./sockets/watchParty')(io);
 // 🔗 3. ĐĂNG KÝ HỆ THỐNG ROUTER ĐÃ CHIA MODULAR SẠCH SẼ
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/history", require("./routes/history"));
-app.use("/", require("./routes/proxy")); // Giữ nguyên đít endpoint proxy gốc cho FE gọi
+app.use("/api", require("./routes/proxy"));
 
 const PORT = config.PORT || 5000;
 server.listen(PORT, () => {
