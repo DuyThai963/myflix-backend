@@ -2,12 +2,70 @@ const express = require("express");
 const router = express.Router();
 const { pool } = require('../configs/db');
 
+// 2. API KHỞI TẠO KHUNG TĨNH KHI MỞ MODAL (BẢO TOÀN THỜI GIAN & GÁC CỔNG 15 PHIM)
+router.post("/init", async (req, res) => {
+  const { userId, movieId, episodeSlug, episodeName, currentTime, movie } = req.body;
+
+  if (!userId || !movieId || !movie) {
+    return res.status(400).json({ error: "Thiếu dữ liệu khởi tạo!" });
+  }
+
+  try {
+    const parsedUserId = parseInt(userId, 10);
+    const watchId = String(movieId);
+    
+    const upsertQuery = `
+      INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (user_id, watch_id) 
+      DO UPDATE SET 
+        episode_slug = EXCLUDED.episode_slug,
+        episode_name = EXCLUDED.episode_name,
+        movie = EXCLUDED.movie,
+        updated_at = NOW();
+    `;
+
+    const upsertValues = [
+      parsedUserId, 
+      watchId, 
+      episodeSlug ? String(episodeSlug) : "1", 
+      episodeName ? String(episodeName) : "Tập 1", 
+      0, // Luôn insert 0 cho lúc khởi tạo mới
+      typeof movie === "string" ? movie : JSON.stringify(movie)
+    ];
+
+    // 1. UPSERT bọc chặt chẽ: TUYỆT ĐỐI KHÔNG ghi đè watched_time
+    await pool.query(upsertQuery, upsertValues);
+
+    // 2. KHỐI GÁC CỔNG 15 PHIM: Xóa các bản ghi cũ nếu user vượt quá 15 phim
+    await pool.query(`
+      DELETE FROM watch_histories 
+      WHERE user_id = $1
+        AND watch_id IN (
+          SELECT watch_id FROM watch_histories 
+          WHERE user_id = $1 
+          ORDER BY updated_at DESC 
+          OFFSET 15
+        )
+    `, [parsedUserId]);
+
+    return res.json({ success: true, message: "Đã khởi tạo khung tĩnh và kiểm soát giới hạn 15 phim!" });
+  } catch (err) {
+    console.error("❌ [LỖI KHỐI INIT BACKEND]:", err.message);
+    return res.status(500).json({ error: "Lỗi hệ thống khi khởi tạo dữ liệu!" });
+  }
+});
+
 // 3. API ĐỒNG BỘ TIẾN TRÌNH XEM TỪ LOCAL STORAGE (ÉP SỐ NGUYÊN NÉ LỖI 500)
 router.post("/sync", async (req, res) => {
   const { userId, localHistory } = req.body; 
 
   if (!userId || !localHistory || !Array.isArray(localHistory)) {
     return res.status(400).json({ error: "Dữ liệu đồng bộ không hợp lệ!" });
+  }
+
+  if (localHistory.length === 0) {
+    return res.json({ success: true, message: "Không có dữ liệu local mới để đồng bộ." });
   }
 
   try {
@@ -65,7 +123,18 @@ router.post("/sync", async (req, res) => {
       ]);
     }
 
-    return res.json({ success: true, message: "Đã đồng bộ hóa dữ liệu sạch bóng rác!" });
+    // 🛡️ BẮT BUỘC: Gọt sạch mảng lịch sử về tối đa 15 phim mới nhất
+    await pool.query(`
+      DELETE FROM watch_histories 
+      WHERE id IN (
+        SELECT id FROM watch_histories 
+        WHERE user_id = $1 
+        ORDER BY updated_at DESC 
+        OFFSET 15
+      )
+    `, [parsedUserId]);
+
+    return res.json({ success: true, message: "Đã đồng bộ hóa dữ liệu và dọn dẹp sạch mảng rác vượt ngưỡng 15 bản ghi!" });
   } catch (err) {
     console.error("❌ [LỖI KHỐI SYNC BACKEND]:", err.message);
     return res.status(500).json({ error: "Lỗi hệ thống!" });
@@ -78,7 +147,7 @@ router.get("/:userId", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT * FROM watch_histories WHERE user_id = $1 ORDER BY updated_at DESC",
+      "SELECT * FROM watch_histories WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 15",
       [userId]
     );
     
@@ -121,6 +190,31 @@ router.delete("/delete", async (req, res) => {
   } catch (err) {
     console.error("❌ [Server API Delete LỖI THỰC THI SQL]:", err.message);
     return res.status(500).json({ error: "Lỗi hệ thống khi tương tác với Database!" });
+  }
+});
+
+// 6. API CẬP NHẬT NHANH MỐC THỜI GIAN (TỐI ƯU BĂNG THÔNG CHO VIDEO PLAYER)
+router.post("/update-time", async (req, res) => {
+  const { userId, movieId, currentTime } = req.body;
+
+  if (!userId || !movieId) {
+    return res.status(400).json({ error: "Thiếu dữ liệu update-time!" });
+  }
+
+  try {
+    const parsedUserId = parseInt(userId, 10);
+    const parsedTime = Math.round(parseFloat(currentTime || 0));
+    const cleanMovieId = movieId && movieId.includes("-") ? movieId.split("-")[0] : movieId;
+
+    await pool.query(
+      `UPDATE watch_histories SET watched_time = $1, updated_at = NOW() WHERE user_id = $2 AND watch_id = $3`,
+      [parsedTime, parsedUserId, cleanMovieId]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("❌ [LỖI KHỐI UPDATE TIME BACKEND]:", err.message);
+    return res.status(500).json({ error: "Lỗi hệ thống!" });
   }
 });
 
