@@ -32,11 +32,11 @@ module.exports = function (io) {
           const data = await redisClient.get(key);
           if (data) {
             const room = JSON.parse(data);
-            if (room.users.length > 0) activeRooms.push(room);
+            activeRooms.push(room);
           }
         }
       } else {
-        activeRooms = Object.values(memoryRooms).filter(r => r.users.length > 0);
+        activeRooms = Object.values(memoryRooms);
       }
       io.emit("active_rooms_list", activeRooms);
     } catch (err) { console.error("❌ Lỗi sảnh:", err.message); }
@@ -51,8 +51,9 @@ module.exports = function (io) {
         roomId,
         roomName: roomName || `Phòng của ${hostUsername || 'Admin'}`,
         hostUserId, hostUsername, hostId: socket.id, hostToken,
-        movieState: { slug: movieInfo.slug, title: movieInfo.title, episode: movieInfo.episode || "Tập 1", currentTime: 0, isPlaying: false },
-        users: []
+        movieState: { id: movieInfo.id, slug: movieInfo.slug, title: movieInfo.title, episode: movieInfo.episode || "Tập 1", episodeSlug: movieInfo.episodeSlug || "full", currentTime: 0, isPlaying: false },
+        users: [],
+        joinedUserIds: [] // 🎯 Thêm mảng lưu ID khách mời (đã đăng nhập)
       };
       await saveRoom(roomId, roomData);
       socket.emit("room_created_success", { roomId, hostToken });
@@ -74,35 +75,69 @@ module.exports = function (io) {
       let finalUserId = userId ? Number(userId) : null;
       const isHostRoute = (hostToken && room.hostToken === hostToken) || (userId && Number(room.hostUserId) === Number(userId));
       
+      // 👑 TƯỚNG QUÂN TRỞ VỀ: Nếu người vào là Creator, lập tức đoạt lại cờ Host
       if (isHostRoute) {
         finalName = room.hostUsername;
         finalUserId = Number(room.hostUserId);
+        room.hostId = socket.id; 
       } else if (!finalName) {
         finalName = `Khách_${socket.id.substring(0, 4)}`;
       }
 
-      const isUserExists = room.users.some(user => user.socketId === socket.id);
-      
-      if (room.users.length === 0) {
+      // 🎯 LỌC KHÁCH: Nếu có đăng nhập (có finalUserId) VÀ không phải chủ phòng -> Đưa vào danh sách lưu trữ
+      if (finalUserId && !isHostRoute) {
+        if (!room.joinedUserIds) room.joinedUserIds = [];
+        if (!room.joinedUserIds.includes(finalUserId)) room.joinedUserIds.push(finalUserId);
+      }
+
+      // 🧹 DỌN RÁC NGƯỜI DÙNG TRÙNG LẶP: Xóa session cũ của cùng 1 user (Do F5 hoặc mở 2 tab)
+      if (finalUserId) {
+        const oldLength = room.users.length;
+        room.users = room.users.filter(u => u.userId !== finalUserId);
+      }
+
+      if (room.users.length === 0 && !isHostRoute) {
         room.hostId = socket.id; 
         if (resumeTime) room.movieState.currentTime = resumeTime;
         if (resumeEpisode) room.movieState.episode = resumeEpisode;
       }
 
+      const isUserExists = room.users.some(user => user.socketId === socket.id);
       if (!isUserExists) {
         room.users.push({ socketId: socket.id, name: finalName, userId: finalUserId });
       }
 
       await saveRoom(roomId, room);
+
+      if (!isHostRoute && room.hostId) {
+        io.to(room.hostId).emit("request_current_time_from_host", { targetSocketId: socket.id });
+      }
+
       socket.emit("room_state", { roomId: room.roomId, roomName: room.roomName, isHost: room.hostId === socket.id, movieState: room.movieState });
       await broadcastActiveRooms();
     });
 
-    socket.on("host_submitted_time_for_newbie", async ({ roomId, targetSocketId, currentTime, isPlaying, episodeName }) => {
+    // 📡 Lắng nghe Host liên tục cập nhật trạng thái phòng (để lưu vào Redis khi mọi người out hết vẫn có mốc để xem tiếp)
+    socket.on("host_update_room_state", async ({ roomId, currentTime, isPlaying, episodeSlug, episodeName }) => {
       const room = await getRoom(roomId);
       if (room) {
+        if (room.hostId === socket.id) {
+          room.movieState.currentTime = currentTime;
+          room.movieState.isPlaying = isPlaying;
+          if (episodeSlug) room.movieState.episodeSlug = episodeSlug;
+          if (episodeName) room.movieState.episode = episodeName;
+          await saveRoom(roomId, room);
+          await broadcastActiveRooms();
+        }
+      }
+    });
+
+    socket.on("host_submitted_time_for_newbie", async ({ roomId, targetSocketId, currentTime, isPlaying, episodeSlug, episodeName }) => {
+      const room = await getRoom(roomId);
+      if (room && room.hostId === socket.id) {
         room.movieState.currentTime = currentTime;
         room.movieState.isPlaying = isPlaying;
+        if (episodeSlug) room.movieState.episodeSlug = episodeSlug;
         if (episodeName) room.movieState.episode = episodeName;
         await saveRoom(roomId, room);
       }
@@ -152,9 +187,16 @@ module.exports = function (io) {
       await broadcastActiveRooms();
     });
 
-    socket.on("delete_room", async ({ roomId, hostToken }) => {
+    socket.on("delete_room", async ({ roomId, hostToken, hostUserId }) => {
       const room = await getRoom(roomId);
-      if (!room || room.hostToken !== hostToken) return;
+      if (!room) return;
+      
+      // 🔐 XÁC THỰC QUYỀN CHỦ PHÒNG: Bằng Token (luồng cũ) HOẶC bằng ID User (luồng mới chuẩn xác hơn)
+      const isValidHost = (hostToken && room.hostToken === hostToken) || 
+                          (hostUserId && String(room.hostUserId) === String(hostUserId));
+                          
+      if (!isValidHost) return;
+
       io.to(roomId).emit("room_deleted_by_host");
       if (redisClient) await redisClient.del(`room:${roomId}`);
       else delete memoryRooms[roomId];
