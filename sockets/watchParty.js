@@ -79,6 +79,12 @@ module.exports = function (io) {
       if (isHostRoute) {
         finalName = room.hostUsername;
         finalUserId = Number(room.hostUserId);
+        
+        // 🎯 Báo hiệu giáng chức cho Host tạm thời (nếu có)
+        if (room.hostId && room.hostId !== socket.id) {
+          io.to(room.hostId).emit("you_are_demoted_to_guest");
+        }
+        
         room.hostId = socket.id; 
       } else if (!finalName) {
         finalName = `Khách_${socket.id.substring(0, 4)}`;
@@ -109,12 +115,26 @@ module.exports = function (io) {
 
       await saveRoom(roomId, room);
 
-      if (!isHostRoute && room.hostId) {
-        io.to(room.hostId).emit("request_current_time_from_host", { targetSocketId: socket.id });
-      }
-
       socket.emit("room_state", { roomId: room.roomId, roomName: room.roomName, isHost: room.hostId === socket.id, movieState: room.movieState });
       await broadcastActiveRooms();
+    });
+
+    // 📡 Khách chủ động báo đã load xong video và xin giờ chuẩn xác
+    socket.on("guest_ready_to_sync", async ({ roomId }) => {
+      const room = await getRoom(roomId);
+      if (room && room.hostId) {
+        // 🎯 LUỒNG REJOIN: Nếu Creator (Host) vừa bung player và phòng đang có Guest
+        // Host sẽ không tự hỏi mình, mà hỏi ngược Guest để lấy giờ "đang chảy" mới nhất!
+        if (room.hostId === socket.id && room.users.length > 1) {
+          const guest = room.users.find(u => u.socketId !== socket.id);
+          if (guest) {
+            io.to(guest.socketId).emit("request_current_time_from_host", { targetSocketId: socket.id });
+          }
+        } else {
+          // Luồng bình thường: Khách mới vào hỏi Host
+          io.to(room.hostId).emit("request_current_time_from_host", { targetSocketId: socket.id });
+        }
+      }
     });
 
     // 📡 Lắng nghe Host liên tục cập nhật trạng thái phòng (để lưu vào Redis khi mọi người out hết vẫn có mốc để xem tiếp)
@@ -128,13 +148,34 @@ module.exports = function (io) {
           if (episodeName) room.movieState.episode = episodeName;
           await saveRoom(roomId, room);
           await broadcastActiveRooms();
+          
+          // 🎯 DOUBLE CHECK (SOFT SYNC): Bắn mốc thời gian định kỳ cho mọi người nắn lại kim đồng hồ
+          socket.to(roomId).emit("soft_sync_from_host", { currentTime, isPlaying });
         }
+      }
+    });
+
+    // 🎯 Lắng nghe Host thực hiện thao tác CỨNG (Play/Pause/Tua) để Broadcast Real-time
+    socket.on("host_action_sync", async ({ roomId, currentTime, isPlaying }) => {
+      const room = await getRoom(roomId);
+      if (room && room.hostId === socket.id) {
+        room.movieState.currentTime = currentTime;
+        room.movieState.isPlaying = isPlaying;
+        await saveRoom(roomId, room);
+        socket.to(roomId).emit("sync_action_from_host", { currentTime, isPlaying });
       }
     });
 
     socket.on("host_submitted_time_for_newbie", async ({ roomId, targetSocketId, currentTime, isPlaying, episodeSlug, episodeName }) => {
       const room = await getRoom(roomId);
-      if (room && room.hostId === socket.id) {
+      if (!room) return;
+      
+      const isSenderHost = room.hostId === socket.id;
+      const isSenderInRoom = room.users.some(u => u.socketId === socket.id);
+      
+      if (!isSenderInRoom) return;
+
+      if (isSenderHost) {
         room.movieState.currentTime = currentTime;
         room.movieState.isPlaying = isPlaying;
         if (episodeSlug) room.movieState.episodeSlug = episodeSlug;
