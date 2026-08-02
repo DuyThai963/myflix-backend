@@ -26,9 +26,6 @@ config.CURRENT_MOVIE_API_URL = config.MOVIE_PROVIDER === "ophim"
   ? config.OPHIM_BASE_URL 
   : config.PHIMAPI_BASE_URL;
 
-// ✅ LOG KIỂM TRA: Thông báo nguồn phim đang sử dụng
-console.log(`🚀 [Movie Provider Engine] Đang sử dụng Nguồn Phim: ${config.MOVIE_PROVIDER.toUpperCase()} (${config.CURRENT_MOVIE_API_URL})`);
-
 // Khởi tạo PostgreSQL Pool
 const pool = new Pool({
   connectionString: config.DATABASE_URL,
@@ -37,9 +34,8 @@ const pool = new Pool({
 
 pool.connect((err, client, release) => {
   if (err) {
-    console.error('❌ Kết nối Database thất bại rồi Thái ơi! Lỗi:', err.message);
+    console.error('❌ Kết nối Database thất bại! Lỗi:', err.message);
   } else {
-    console.log('🚀 Node.js đã thông mạch tới Database Neon Singapore thành công!');
     release();
   }
 });
@@ -57,7 +53,7 @@ if (config.REDIS_URL) {
   Promise.all([pubClient.connect(), subClient.connect(), redisClient.connect()])
     .catch((err) => console.error("❌ Thất bại khi kết nối hệ thống Redis:", err.message));
 } else {
-  console.log("⚠️ Không tìm thấy REDIS_URL trong file config. Chạy phòng tạm bằng RAM Local.");
+  console.warn("⚠️ Không tìm thấy REDIS_URL. Chạy phòng tạm bằng RAM Local.");
 }
 
 module.exports = { pool, redisClient, pubClient, subClient, config };

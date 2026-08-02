@@ -66,11 +66,8 @@ router.get("/home", async (req, res) => {
 
     const targetUrl = `${baseUrl}/v1/api/home`;
 
-    console.log(`🌐 [Proxy GET /home] Provider: ${provider.toUpperCase()} | Target: ${targetUrl}`);
-
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
-    console.log(`✅ [Proxy GET /home SUCCESS] Retrieved ${normalized.data.items.length} items`);
     res.json(normalized);
   } catch (error) {
     console.error("❌ Lỗi API Home Proxy:", error.message);
@@ -85,8 +82,6 @@ router.get("/movie/:slug", async (req, res) => {
     const baseUrl = config.CURRENT_MOVIE_API_URL;
     const targetUrl = `${baseUrl}/phim/${slug}`;
 
-    console.log(`🌐 [Proxy GET /movie/${slug}] Provider: ${config.MOVIE_PROVIDER.toUpperCase()} | Target: ${targetUrl}`);
-
     const response = await axios.get(targetUrl, { timeout: 10000 });
     
     const data = response.data;
@@ -100,7 +95,6 @@ router.get("/movie/:slug", async (req, res) => {
       }
     }
     
-    console.log(`✅ [Proxy GET /movie/${slug} SUCCESS] Title: "${data?.movie?.name}" | Episodes: ${data?.episodes?.[0]?.server_data?.length || 0}`);
     res.json(data);
   } catch (error) {
     console.error(`❌ Lỗi API Detail (${req.params.slug}):`, error.message);
@@ -117,11 +111,8 @@ router.get("/search", async (req, res) => {
     const baseUrl = config.CURRENT_MOVIE_API_URL;
     const targetUrl = `${baseUrl}/v1/api/tim-kiem?keyword=${encodeURIComponent(keyword)}`;
 
-    console.log(`🌐 [Proxy GET /search] Provider: ${config.MOVIE_PROVIDER.toUpperCase()} | Keyword: "${keyword}" | Target: ${targetUrl}`);
-
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
-    console.log(`✅ [Proxy GET /search SUCCESS] Found ${normalized.data.items.length} items`);
     res.json(normalized);
   } catch (error) {
     console.error("❌ Lỗi API Search Proxy:", error.message);
@@ -137,8 +128,6 @@ router.get("/category/:slug", async (req, res) => {
     const baseUrl = config.CURRENT_MOVIE_API_URL;
 
     const targetUrl = `${baseUrl}/v1/api/the-loai/${slug}?page=${page}`;
-    console.log(`🌐 [Proxy GET /category/${slug}] Provider: ${config.MOVIE_PROVIDER.toUpperCase()} | Target: ${targetUrl}`);
-
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
     res.json(normalized);
@@ -159,8 +148,6 @@ router.get("/danh-sach/:slug", async (req, res) => {
     const targetUrl = provider === "phimapi" && slug === "phim-moi-cap-nhat"
       ? `${baseUrl}/danh-sach/phim-moi-cap-nhat?page=${page}`
       : `${baseUrl}/v1/api/danh-sach/${slug}?page=${page}`;
-
-    console.log(`🌐 [Proxy GET /danh-sach/${slug}] Provider: ${provider.toUpperCase()} | Target: ${targetUrl}`);
 
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
