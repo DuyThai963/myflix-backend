@@ -133,6 +133,11 @@ module.exports = function (io) {
     socket.on("guest_ready_to_sync", async ({ roomId }) => {
       const room = await getRoom(roomId);
       if (room && room.hostId) {
+        // 🛡️ CHẶN HOST TỰ HỎI BẢN THÂN KHI Ở MỘT MÌNH TRONG PHÒNG
+        if (room.hostId === socket.id && room.users.length <= 1) {
+          return;
+        }
+
         // 🎯 LUỒNG REJOIN: Nếu Creator (Host) vừa bung player và phòng đang có Guest
         // Host sẽ không tự hỏi mình, mà hỏi ngược Guest để lấy giờ "đang chảy" mới nhất!
         if (room.hostId === socket.id && room.users.length > 1) {

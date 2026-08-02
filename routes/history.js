@@ -4,7 +4,7 @@ const { pool } = require('../configs/db');
 
 // 2. API KHỞI TẠO KHUNG TĨNH KHI MỞ MODAL (BẢO TOÀN THỜI GIAN & GÁC CỔNG 15 PHIM)
 router.post("/init", async (req, res) => {
-  const { userId, movieId, episodeSlug, episodeName, currentTime, movie } = req.body;
+  const { userId, movieId, episodeSlug, episodeName, currentTime, movie, serverName, isEmbed } = req.body;
 
   if (!userId || !movieId || !movie) {
     return res.status(400).json({ error: "Thiếu dữ liệu khởi tạo!" });
@@ -15,13 +15,15 @@ router.post("/init", async (req, res) => {
     const watchId = String(movieId).split('-')[0];
 
     const upsertQuery = `
-      INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, server_name, is_embed, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       ON CONFLICT (user_id, watch_id) 
       DO UPDATE SET 
         episode_slug = EXCLUDED.episode_slug,
         episode_name = EXCLUDED.episode_name,
         movie = EXCLUDED.movie,
+        server_name = EXCLUDED.server_name,
+        is_embed = EXCLUDED.is_embed,
         updated_at = NOW();
     `;
 
@@ -31,7 +33,9 @@ router.post("/init", async (req, res) => {
       episodeSlug ? String(episodeSlug) : "1", 
       episodeName ? String(episodeName) : "Tập 1", 
       0, // Luôn insert 0 cho lúc khởi tạo mới
-      typeof movie === "string" ? movie : JSON.stringify(movie)
+      typeof movie === "string" ? movie : JSON.stringify(movie),
+      serverName ? String(serverName) : "",
+      isEmbed === true
     ];
 
     await pool.query(upsertQuery, upsertValues);
@@ -148,6 +152,8 @@ router.get("/:userId", async (req, res) => {
       episodeName: row.episode_name,
       currentTime: parseFloat(row.watched_time),
       updatedAt: row.updated_at,
+      serverName: row.server_name || "",
+      isEmbed: row.is_embed || false,
       movie: row.movie 
     }));
 
@@ -185,7 +191,7 @@ router.delete("/delete", async (req, res) => {
 
 // 6. API CẬP NHẬT NHANH MỐC THỜI GIAN
 router.post("/update-time", async (req, res) => {
-  const { userId, movieId, currentTime } = req.body;
+  const { userId, movieId, currentTime, serverName, isEmbed } = req.body;
 
   if (!userId || !movieId) {
     return res.status(400).json({ error: "Thiếu dữ liệu update-time!" });
@@ -196,10 +202,18 @@ router.post("/update-time", async (req, res) => {
     const parsedTime = Math.round(parseFloat(currentTime || 0));
     const cleanMovieId = movieId && movieId.includes("-") ? movieId.split("-")[0] : movieId;
 
-    await pool.query(
-      `UPDATE watch_histories SET watched_time = $1, updated_at = NOW() WHERE user_id = $2 AND watch_id = $3`,
-      [parsedTime, parsedUserId, cleanMovieId]
-    );
+    // Nếu có truyền serverName/isEmbed thì cập nhật luôn, không thì chỉ cập nhật thời gian
+    if (serverName !== undefined || isEmbed !== undefined) {
+      await pool.query(
+        `UPDATE watch_histories SET watched_time = $1, server_name = $2, is_embed = $3, updated_at = NOW() WHERE user_id = $4 AND watch_id = $5`,
+        [parsedTime, serverName ? String(serverName) : "", isEmbed === true, parsedUserId, cleanMovieId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE watch_histories SET watched_time = $1, updated_at = NOW() WHERE user_id = $2 AND watch_id = $3`,
+        [parsedTime, parsedUserId, cleanMovieId]
+      );
+    }
 
     return res.json({ success: true });
   } catch (err) {
