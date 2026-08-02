@@ -7,13 +7,16 @@ router.post("/init", async (req, res) => {
   const { userId, movieId, episodeSlug, episodeName, currentTime, movie } = req.body;
 
   if (!userId || !movieId || !movie) {
+    console.warn("⚠️ [DB History /init WARNING] Thiếu dữ liệu khởi tạo:", { userId, movieId, hasMovie: Boolean(movie) });
     return res.status(400).json({ error: "Thiếu dữ liệu khởi tạo!" });
   }
 
   try {
     const parsedUserId = parseInt(userId, 10);
-    const watchId = String(movieId);
+    const watchId = String(movieId).split('-')[0];
     
+    console.log(`📌 [DB History /init] UserId=${parsedUserId} | WatchId=${watchId} | Ep=${episodeSlug} | Title="${movie?.title || movie?.name}"`);
+
     const upsertQuery = `
       INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -34,7 +37,6 @@ router.post("/init", async (req, res) => {
       typeof movie === "string" ? movie : JSON.stringify(movie)
     ];
 
-    // 1. UPSERT bọc chặt chẽ: TUYỆT ĐỐI KHÔNG ghi đè watched_time
     await pool.query(upsertQuery, upsertValues);
 
     // 2. KHỐI GÁC CỔNG 15 PHIM: Xóa các bản ghi cũ nếu user vượt quá 15 phim
@@ -56,7 +58,7 @@ router.post("/init", async (req, res) => {
   }
 });
 
-// 3. API ĐỒNG BỘ TIẾN TRÌNH XEM TỪ LOCAL STORAGE (ÉP SỐ NGUYÊN NÉ LỖI 500)
+// 3. API ĐỒNG BỘ TIẾN TRÌNH XEM TỪ LOCAL STORAGE HOẶC PLAYER
 router.post("/sync", async (req, res) => {
   const { userId, localHistory } = req.body; 
 
@@ -95,13 +97,7 @@ router.post("/sync", async (req, res) => {
       const parsedTime = Math.round(parseFloat(currentTime || 0));
       const cleanMovieId = watchId && watchId.includes("-") ? watchId.split('-')[0] : watchId;
 
-      if (parsedTime === 0) {
-        await pool.query(
-          "DELETE FROM watch_histories WHERE user_id = $1 AND watch_id = $2",
-          [parsedUserId, cleanMovieId]
-        );
-        continue;
-      }
+      console.log(`📌 [DB History /sync] UserId=${parsedUserId} | CleanWatchId=${cleanMovieId} | Time=${parsedTime}s | Ep=${episodeSlug}`);
 
       await pool.query(`
         INSERT INTO watch_histories (user_id, watch_id, episode_slug, episode_name, watched_time, movie, updated_at)
@@ -151,6 +147,8 @@ router.get("/:userId", async (req, res) => {
       [userId]
     );
     
+    console.log(`📌 [DB History GET /:userId] User ${userId} -> Retrived ${result.rows.length} history items`);
+
     const formattedHistory = result.rows.map((row) => ({
       watchId: row.watch_id,
       episodeSlug: row.episode_slug,
@@ -167,7 +165,7 @@ router.get("/:userId", async (req, res) => {
   }
 });
 
-// 5. API XÓA LỊCH SỬ XEM THEO WATCH_ID (HÀM TÁCH CHUỖI SIÊU TỐC)
+// 5. API XÓA LỊCH SỬ XEM THEO WATCH_ID
 router.delete("/delete", async (req, res) => {
   const { userId, watchId } = req.query;
 
@@ -177,6 +175,7 @@ router.delete("/delete", async (req, res) => {
 
   try {
     const parsedUserId = parseInt(userId, 10);
+    console.log(`📌 [DB History DELETE] User ${parsedUserId} deleting watchId=${watchId}`);
     
     const queryText = `
       DELETE FROM watch_histories 
@@ -193,7 +192,7 @@ router.delete("/delete", async (req, res) => {
   }
 });
 
-// 6. API CẬP NHẬT NHANH MỐC THỜI GIAN (TỐI ƯU BĂNG THÔNG CHO VIDEO PLAYER)
+// 6. API CẬP NHẬT NHANH MỐC THỜI GIAN
 router.post("/update-time", async (req, res) => {
   const { userId, movieId, currentTime } = req.body;
 
@@ -205,6 +204,8 @@ router.post("/update-time", async (req, res) => {
     const parsedUserId = parseInt(userId, 10);
     const parsedTime = Math.round(parseFloat(currentTime || 0));
     const cleanMovieId = movieId && movieId.includes("-") ? movieId.split("-")[0] : movieId;
+
+    console.log(`📌 [DB History /update-time] User ${parsedUserId} | CleanMovieId=${cleanMovieId} | Time=${parsedTime}s`);
 
     await pool.query(
       `UPDATE watch_histories SET watched_time = $1, updated_at = NOW() WHERE user_id = $2 AND watch_id = $3`,

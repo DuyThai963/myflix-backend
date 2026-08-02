@@ -51,7 +51,17 @@ module.exports = function (io) {
         roomId,
         roomName: roomName || `Phòng của ${hostUsername || 'Admin'}`,
         hostUserId, hostUsername, hostId: socket.id, hostToken,
-        movieState: { id: movieInfo.id, slug: movieInfo.slug, title: movieInfo.title, episode: movieInfo.episode || "Tập 1", episodeSlug: movieInfo.episodeSlug || "full", currentTime: 0, isPlaying: false },
+        movieState: { 
+          id: movieInfo.id, 
+          slug: movieInfo.slug, 
+          title: movieInfo.title, 
+          episode: movieInfo.episode || "Tập 1", 
+          episodeSlug: movieInfo.episodeSlug || "full", 
+          serverName: movieInfo.serverName || "Vietsub", 
+          isEmbedMode: Boolean(movieInfo.isEmbedMode),
+          currentTime: typeof movieInfo.currentTime === "number" ? movieInfo.currentTime : 0, 
+          isPlaying: false 
+        },
         users: [],
         joinedUserIds: [] // 🎯 Thêm mảng lưu ID khách mời (đã đăng nhập)
       };
@@ -138,27 +148,36 @@ module.exports = function (io) {
     });
 
     // 📡 Lắng nghe Host liên tục cập nhật trạng thái phòng (để lưu vào Redis khi mọi người out hết vẫn có mốc để xem tiếp)
-    socket.on("host_update_room_state", async ({ roomId, currentTime, isPlaying, episodeSlug, episodeName }) => {
+    socket.on("host_update_room_state", async ({ roomId, hostUserId, currentTime, isPlaying, episodeSlug, episodeName, serverName, isEmbedMode }) => {
       const room = await getRoom(roomId);
       if (room) {
-        if (room.hostId === socket.id) {
+        // 👑 ƯU TIÊN 1: Kiểm tra hostUserId (Căn cước DB); ƯU TIÊN 2: Mới tới socket.id tạm thời
+        const isSenderHost = (hostUserId && String(room.hostUserId) === String(hostUserId)) || (room.hostId === socket.id);
+        if (isSenderHost) {
+          room.hostId = socket.id;
           room.movieState.currentTime = currentTime;
           room.movieState.isPlaying = isPlaying;
           if (episodeSlug) room.movieState.episodeSlug = episodeSlug;
           if (episodeName) room.movieState.episode = episodeName;
+          if (serverName) room.movieState.serverName = serverName;
+          if (typeof isEmbedMode === "boolean") room.movieState.isEmbedMode = isEmbedMode;
           await saveRoom(roomId, room);
           await broadcastActiveRooms();
           
           // 🎯 DOUBLE CHECK (SOFT SYNC): Bắn mốc thời gian định kỳ cho mọi người nắn lại kim đồng hồ
           socket.to(roomId).emit("soft_sync_from_host", { currentTime, isPlaying });
+          socket.to(roomId).emit("host_changed_episode", { episodeSlug, episodeName, serverName, isEmbedMode, currentTime, isPlaying });
         }
       }
     });
 
     // 🎯 Lắng nghe Host thực hiện thao tác CỨNG (Play/Pause/Tua) để Broadcast Real-time
-    socket.on("host_action_sync", async ({ roomId, currentTime, isPlaying }) => {
+    socket.on("host_action_sync", async ({ roomId, hostUserId, currentTime, isPlaying }) => {
       const room = await getRoom(roomId);
-      if (room && room.hostId === socket.id) {
+      if (!room) return;
+      const isSenderHost = (hostUserId && String(room.hostUserId) === String(hostUserId)) || (room.hostId === socket.id);
+      if (isSenderHost) {
+        room.hostId = socket.id;
         room.movieState.currentTime = currentTime;
         room.movieState.isPlaying = isPlaying;
         await saveRoom(roomId, room);
@@ -166,23 +185,26 @@ module.exports = function (io) {
       }
     });
 
-    socket.on("host_submitted_time_for_newbie", async ({ roomId, targetSocketId, currentTime, isPlaying, episodeSlug, episodeName }) => {
+    socket.on("host_submitted_time_for_newbie", async ({ roomId, hostUserId, targetSocketId, currentTime, isPlaying, episodeSlug, episodeName, serverName, isEmbedMode }) => {
       const room = await getRoom(roomId);
       if (!room) return;
       
-      const isSenderHost = room.hostId === socket.id;
-      const isSenderInRoom = room.users.some(u => u.socketId === socket.id);
+      const isSenderHost = (hostUserId && String(room.hostUserId) === String(hostUserId)) || (room.hostId === socket.id);
+      const isSenderInRoom = room.users.some(u => u.socketId === socket.id) || isSenderHost;
       
       if (!isSenderInRoom) return;
 
       if (isSenderHost) {
+        room.hostId = socket.id;
         room.movieState.currentTime = currentTime;
         room.movieState.isPlaying = isPlaying;
         if (episodeSlug) room.movieState.episodeSlug = episodeSlug;
         if (episodeName) room.movieState.episode = episodeName;
+        if (serverName) room.movieState.serverName = serverName;
+        if (typeof isEmbedMode === "boolean") room.movieState.isEmbedMode = isEmbedMode;
         await saveRoom(roomId, room);
       }
-      io.to(targetSocketId).emit("sync_initial_time_to_guest", { currentTime, isPlaying });
+      io.to(targetSocketId).emit("sync_initial_time_to_guest", { currentTime, isPlaying, serverName, isEmbedMode });
     });
 
     socket.on("disconnect", async () => {

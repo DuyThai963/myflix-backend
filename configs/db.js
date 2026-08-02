@@ -1,18 +1,33 @@
 const { Pool } = require('pg');
 const { createClient } = require('redis');
 
-// 🚀 BỌC GIÁP ĐA MÔI TRƯỜNG: Bypass triệt để vụ file config.js bị cho vào .gitignore
 let config = {};
 try {
+  // Ưu tiên load file config.js nếu có
   config = require('../config');
-} catch (e) {
-  config = {
-    PORT: process.env.PORT || 5000,
-    JWT_SECRET: process.env.JWT_SECRET,
-    DATABASE_URL: process.env.DATABASE_URL,
-    REDIS_URL: process.env.REDIS_URL
-  };
-}
+} catch (e) {}
+
+// 🚀 HỢP NHẤT & GHI ĐÈ: Luôn đảm bảo các biến môi trường được nạp và ưu tiên hơn file config.js (nếu trùng)
+config = {
+  ...config, // Giữ lại các giá trị từ file config.js
+  PORT: process.env.PORT || config.PORT || 5000,
+  JWT_SECRET: process.env.JWT_SECRET || config.JWT_SECRET,
+  DATABASE_URL: process.env.DATABASE_URL || config.DATABASE_URL,
+  REDIS_URL: process.env.REDIS_URL || config.REDIS_URL,
+  
+  // 🎬 Cấu hình Nguồn API Phim Động (PhimAPI hoặc OPhim)
+  MOVIE_PROVIDER: process.env.MOVIE_PROVIDER || config.MOVIE_PROVIDER || "phimapi",
+  OPHIM_BASE_URL: process.env.OPHIM_BASE_URL || config.OPHIM_BASE_URL || "https://ophim1.com",
+  PHIMAPI_BASE_URL: process.env.PHIMAPI_BASE_URL || config.PHIMAPI_BASE_URL || "https://phimapi.com",
+};
+
+// Auto Switch Domain URL theo Provider đang chọn
+config.CURRENT_MOVIE_API_URL = config.MOVIE_PROVIDER === "ophim" 
+  ? config.OPHIM_BASE_URL 
+  : config.PHIMAPI_BASE_URL;
+
+// ✅ LOG KIỂM TRA: Thông báo nguồn phim đang sử dụng
+console.log(`🚀 [Movie Provider Engine] Đang sử dụng Nguồn Phim: ${config.MOVIE_PROVIDER.toUpperCase()} (${config.CURRENT_MOVIE_API_URL})`);
 
 // Khởi tạo PostgreSQL Pool
 const pool = new Pool({
