@@ -19,6 +19,7 @@ config = {
   MOVIE_PROVIDER: process.env.MOVIE_PROVIDER || config.MOVIE_PROVIDER || "phimapi",
   OPHIM_BASE_URL: process.env.OPHIM_BASE_URL || config.OPHIM_BASE_URL || "https://ophim1.com",
   PHIMAPI_BASE_URL: process.env.PHIMAPI_BASE_URL || config.PHIMAPI_BASE_URL || "https://phimapi.com",
+  TMDB_API_KEY: process.env.TMDB_API_KEY || config.TMDB_API_KEY || "",
 };
 
 // Auto Switch Domain URL theo Provider đang chọn

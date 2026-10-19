@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 const { config } = require("../configs/db");
+const { enrichMoviesWithTmdb, getTmdbMedia } = require("../services/tmdbService");
 
 // 🛠️ HÀM CHUẨN HÓA DỮ LIỆU ĐẦU RA CHO FRONTEND
 function normalizeListResponse(responseData) {
@@ -38,6 +39,8 @@ function normalizeListResponse(responseData) {
       name: item.name || item.title || "Phim chưa đặt tên",
       slug: item.slug,
       origin_name: item.origin_name || item.name || "",
+      banner: item.banner || thumb,
+      poster: poster,
       thumb_url: thumb,
       poster_url: poster,
       year: item.year || 2026,
@@ -68,6 +71,7 @@ router.get("/home", async (req, res) => {
 
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
+    await enrichMoviesWithTmdb(normalized.data.items);
     res.json(normalized);
   } catch (error) {
     console.error("❌ Lỗi API Home Proxy:", error.message);
@@ -93,6 +97,23 @@ router.get("/movie/:slug", async (req, res) => {
       if (data.movie.poster_url && !data.movie.poster_url.startsWith("http")) {
         data.movie.poster_url = `${cdnDomain}/${data.movie.poster_url.replace(/^\/+/, '')}`;
       }
+
+      // Làm giàu thông tin ảnh chất lượng cao từ TMDB
+      try {
+        const tmdb = await getTmdbMedia(data.movie.name, data.movie.origin_name, data.movie.year);
+        if (tmdb) {
+          if (tmdb.banner) {
+            data.movie.banner = tmdb.banner;
+            data.movie.tmdb_backdrop = tmdb.banner;
+          }
+          if (tmdb.poster) {
+            data.movie.tmdb_poster = tmdb.poster;
+          }
+        }
+      } catch (err) {}
+
+      data.movie.banner = data.movie.banner || data.movie.thumb_url || data.movie.poster_url;
+      data.movie.poster = data.movie.poster_url || data.movie.thumb_url;
     }
     
     res.json(data);
@@ -113,6 +134,7 @@ router.get("/search", async (req, res) => {
 
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
+    await enrichMoviesWithTmdb(normalized.data.items);
     res.json(normalized);
   } catch (error) {
     console.error("❌ Lỗi API Search Proxy:", error.message);
@@ -130,6 +152,7 @@ router.get("/category/:slug", async (req, res) => {
     const targetUrl = `${baseUrl}/v1/api/the-loai/${slug}?page=${page}`;
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
+    await enrichMoviesWithTmdb(normalized.data.items);
     res.json(normalized);
   } catch (error) {
     console.error(`❌ Lỗi API Category (${req.params.slug}):`, error.message);
@@ -151,6 +174,7 @@ router.get("/danh-sach/:slug", async (req, res) => {
 
     const response = await axios.get(targetUrl, { timeout: 10000 });
     const normalized = normalizeListResponse(response.data);
+    await enrichMoviesWithTmdb(normalized.data.items);
     res.json(normalized);
   } catch (error) {
     console.error(`❌ Lỗi API Danh Sách (${req.params.slug}):`, error.message);
